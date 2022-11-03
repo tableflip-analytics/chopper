@@ -4,11 +4,13 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-jupyter = "*"
-nest-asyncio = "*"
-selenium = "*"
+pandas = "*"
 
 [dev-packages]
+black = "*"
 
 [requires]
-python_version = "3.6"
+python_version = "3.11"
+
+[pipenv]
+allow_prereleases = true
