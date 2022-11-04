@@ -1,6 +1,5 @@
 import argparse
 import csv
-import glob
 import os
 import random
 import re
@@ -148,8 +147,6 @@ def shuffle_file(
     files = []
     with open(filepath, "r", encoding=encoding) as fin:
         rows = fin.readlines()
-
-    out_path = output_dir / filepath.stem
 
     headers = rows[0]
     data = rows[1:]
