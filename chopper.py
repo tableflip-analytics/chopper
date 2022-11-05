@@ -364,7 +364,7 @@ def main() -> None:
         output_ext = in_files[0].suffix
 
         files = [combine_files(in_files, config)]
-        config.to_tmp = False
+        config.is_original = False
     else:
         # If input is a file, use that file's extension for outputs.
         output_ext = input_path.suffix
@@ -378,7 +378,7 @@ def main() -> None:
             new_files.extend(split_by_columns(file, col_list, config))
 
         files = new_files
-        config.to_tmp = False
+        config.is_original = False
 
     # Shuffling must be done before by-row chops for proper randomization.
     if shuffles:
@@ -387,7 +387,7 @@ def main() -> None:
             new_files.extend(shuffle_file(file, shuffles, config))
 
         files = new_files
-        config.to_tmp = False
+        config.is_original = False
 
     if rows:
         new_files = []
@@ -395,7 +395,7 @@ def main() -> None:
             new_files.extend(split_by_rows(file, rows, config))
 
         files = new_files
-        config.to_tmp = False
+        config.is_original = False
 
     if equal:
         new_files = []
@@ -403,7 +403,7 @@ def main() -> None:
             new_files.extend(split_by_equal(file, equal, config))
 
         files = new_files
-        config.to_tmp = False
+        config.is_original = False
 
     for file in files:
         newfile = file
