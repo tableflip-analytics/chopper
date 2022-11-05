@@ -57,6 +57,10 @@ Split file into X files of approximately equal row counts. When used in conjunct
 ## Avoiding high memory usage
 CHOPPER was designed with very large files in mind, so avoids loading the entire file to memory where possible. The only situation where this is impossible is where randomization is used (`--shuffles`) _without_ splitting by column values (`--columns`). When splitting by columns, randomization will be performed on the split files, some or all of which may still be quite large, so use the randomization feature with caution whether or not you split by column values.
 
+## TODO
+1. Refactor to skip combining multiple input files when not shuffling, since it is not necessary and potentially expensive.
+2. Use multiprocessing to perform post-column operations in parallel.
+
 ## Authors
 CHOPPER was created by [Joshua Matfess](https://github.com/jsmatfess) of [Table Flip Analytics](https://table-flip.net).
 
