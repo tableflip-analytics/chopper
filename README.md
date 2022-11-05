@@ -23,15 +23,20 @@ Just clone the repo and get started. CHOPPER has no dependencies outside the sta
 python3 -m chopper [-h] [-x EXTENSION] [-e ENCODING] [-d DELIMITER] [-p PREFIX] [-s SHUFFLES] [-c COLUMNS] [-r ROWS | -q EQUAL] input_path output_directory
 
 positional arguments:
-  input_path Input file or directory. If a directory is specified, CHOPPER will treat all files in the directory (including subdirectories) as a single file for splitting and shuffling purposes.
+  input_path 
+  Input file or directory. If a directory is specified, CHOPPER will treat all files
+  in the directory (including subdirectories) as a single file for splitting and
+  shuffling purposes.
   
-  output_directory An empty/nonexistent folder is highly recommended, as CHOPPER may overwrite files.
+  output_directory
+  An empty/nonexistent folder is highly recommended, as CHOPPER may overwrite files.
 
 options:
   -h, --help show this help message and exit
 
   -x EXTENSION, --extension EXTENSION
-File extension to search for if input_path is a directory. Specifying the extension is highly recommended to avoid accidental inclusion of files.
+File extension to search for if input_path is a directory. Specifying the extension is
+highly recommended to avoid accidental inclusion of files.
 
   -e ENCODING, --encoding ENCODING
   
@@ -42,7 +47,11 @@ Delimiter to use when parsing the input file. Default ','.
 String prepended to each output file
 
   -s SHUFFLES, --shuffles SHUFFLES
-Perform N shuffles. Outputs one set of chopped files per shuffle. WARNING: In the worst case scenario (when only splitting by row count and not any column), setting this flag requires loading the entire input file to memory. When the columns argument is used, CHOPPER will perform shuffles after splitting by those columns to keep memory use as low as possible.
+Perform N shuffles. Outputs one set of chopped files per shuffle.
+WARNING: In the worst case scenario (when only splitting by row count and not any
+column), setting this flag requires loading the entire input file to memory. When the
+columns argument is used, CHOPPER will perform shuffles after splitting by those
+columns to keep memory use as low as possible.
 
   -c COLUMNS, --columns COLUMNS
 Comma separated list of field names to split by.
@@ -51,7 +60,8 @@ Comma separated list of field names to split by.
 Maximum number of rows per file.
 
   -q EQUAL, --equal EQUAL
-Split file into X files of approximately equal row counts. When used in conjunction with the --columns argument, this will split each subgroup into X files.
+Split file into X files of approximately equal row counts. When used in conjunction
+with the --columns argument, this will split each subgroup into X files.
 ```
 
 ## Avoiding high memory usage
