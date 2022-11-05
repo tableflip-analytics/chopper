@@ -7,9 +7,18 @@ import os
 import random
 import re
 
+from dataclasses import dataclass
 from itertools import cycle
 from pathlib import Path
 from typing import Any
+
+
+@dataclass
+class Config:
+    encoding: str
+    delimiter: str
+    output_dir: Path
+    is_original: bool = True
 
 
 def parse_args() -> dict[str, Any]:
@@ -129,26 +138,22 @@ def parse_args() -> dict[str, Any]:
     return args
 
 
-def shuffle_file(
-    filepath: Path, encoding: str, shuffles: int, to_tmp: bool, output_dir: Path
-) -> list[str]:
+def shuffle_file(filepath: Path, shuffles: int, config: Config) -> list[str]:
 
     """Creates N copies of the provided file with the headers intact and data lines
     shuffled.
 
         Args:
             filepath (Path): The path of the file to shuffle.
-            encoding (str): Encoding to use for file read and write operations.
             shuffles (int): Number of shuffles to perform. Outputs one file per shuffle.
-            to_tmp (bool): True implies the input file is the original file and should not be deleted.
-            output_dir (Path): Destination directory.
+            config (Config): Config object created from CLI arguments.
 
         Returns:
             list[Path]: List of shuffled intermediate files.
     """
 
     files = []
-    with open(filepath, "r", encoding=encoding) as fin:
+    with open(filepath, "r", encoding=config.encoding) as fin:
         rows = fin.readlines()
 
     headers = rows[0]
@@ -156,15 +161,15 @@ def shuffle_file(
 
     for i in range(shuffles):
         random.shuffle(data)
-        new_outpath = output_dir / f"{filepath.stem}_shuffle{i+1}"
+        new_outpath = config.output_dir / f"{filepath.stem}_shuffle{i+1}"
 
-        with open(new_outpath, "w", encoding=encoding) as fout:
+        with open(new_outpath, "w", encoding=config.encoding) as fout:
             fout.write(headers)
             fout.writelines(data)
 
         files.append(new_outpath)
 
-    if not to_tmp:
+    if not config.is_original:
         os.remove(filepath)
 
     # For aesthetics. If only one set of files, no need to specify which shuffle.
@@ -186,45 +191,35 @@ def clean_filename(string: str) -> str:
     return re.sub(r"\W", "_", string)
 
 
-def split_by_columns(
-    filepath: Path,
-    col_list: list[str],
-    encoding: str,
-    delimiter: str,
-    to_tmp: bool,
-    output_dir: Path,
-) -> list[Path]:
+def split_by_columns(filepath: Path, col_list: list[str], config: Config) -> list[Path]:
     """Create one file per unique combination of values in the specified columns in
     the input file.
 
         Args:
             filepath (Path): The path of the file to split.
             col_list (list): List of columns to split by. Must match values in header row exactly.
-            encoding (str): Encoding to use for file read and write operations.
-            delimiter (str): Delimiter to use for file read and write operations.
-            to_tmp (bool): True implies the input file is the original file and should not be deleted.
-            output_dir (Path): Destination directory.
+            config (Config): Config object created from CLI arguments.
 
         Returns:
             list[Path]: List of split intermediate files.
     """
 
-    with open(filepath, "r", encoding=encoding) as f:
-        reader = csv.DictReader(f, delimiter=delimiter)
+    with open(filepath, "r", encoding=config.encoding) as f:
+        reader = csv.DictReader(f, delimiter=config.delimiter)
         files = {}
 
         for row in reader:
             # File named based on values of split columns.
-            out_path = output_dir / clean_filename(
+            out_path = config.output_dir / clean_filename(
                 "__".join([f"{col}_{row[col]}" for col in col_list])
             )
 
             if out_path in files:
                 writer = files[out_path]["writer"]
             else:  # Initialize file for new value combination and add to dict.
-                fout = open(out_path, "w", encoding=encoding, newline="")
+                fout = open(out_path, "w", encoding=config.encoding, newline="")
                 writer = csv.DictWriter(
-                    fout, delimiter=delimiter, fieldnames=reader.fieldnames
+                    fout, delimiter=config.delimiter, fieldnames=reader.fieldnames
                 )
                 writer.writeheader()
                 files.update({out_path: {"fout": fout, "writer": writer}})
@@ -234,31 +229,27 @@ def split_by_columns(
     for file in files.values():
         file["fout"].close()
 
-    if not to_tmp:
+    if not config.is_original:
         os.remove(filepath)
 
     return list(files.keys())
 
 
-def split_by_equal(
-    filepath: Path, encoding: str, equal: int, to_tmp: bool, output_dir: Path
-) -> list[Path]:
+def split_by_equal(filepath: Path, equal: int, config: Config) -> list[Path]:
     """Creates N files of approximately (+/- 1) equal size.
 
     Args:
         filepath (Path): The path of the file to split.
-        encoding (str): Encoding to use for file read and write operations.
         equal (int): Number of files to split into.
-        to_tmp (bool): True implies the input file is the original file and should not be deleted.
-        output_dir (Path): Destination directory.
+        config (Config): Config object created from CLI arguments.
 
     Returns:
         list[Path]: List of split intermediate files.
     """
 
-    with open(filepath, "r", encoding=encoding) as fin:
-        files = [output_dir / f"{filepath.stem}_{i+1}" for i in range(equal)]
-        fouts = [open(f, "w", encoding=encoding) for f in files]
+    with open(filepath, "r", encoding=config.encoding) as fin:
+        files = [config.output_dir / f"{filepath.stem}_{i+1}" for i in range(equal)]
+        fouts = [open(f, "w", encoding=config.encoding) for f in files]
         fout_cycle = cycle(fouts)
 
         for i, row in enumerate(fin):
@@ -272,29 +263,25 @@ def split_by_equal(
     for fout in fouts:
         fout.close()
 
-    if not to_tmp:
+    if not config.is_original:
         os.remove(filepath)
 
     return files
 
 
-def split_by_rows(
-    filepath: Path, encoding: str, rows: int, to_tmp: bool, output_dir: Path
-) -> list[Path]:
+def split_by_rows(filepath: Path, rows: int, config: Config) -> list[Path]:
     """Splits the input file into files of at most N rows.
 
     Args:
         filepath (Path): The path of the file to split.
-        encoding (str): Encoding to use for file read and write operations.
         rows (int): Max rows per file.
-        to_tmp (bool): True implies the input file is the original file and should not be deleted.
-        output_dir (Path): Destination directory.
+        config (Config): Config object created from CLI arguments.
 
     Returns:
         list[Path]: List of split intermediate files.
     """
 
-    with open(filepath, "r", encoding=encoding) as f:
+    with open(filepath, "r", encoding=config.encoding) as f:
         headers = ""
         filenum = 0
         files = []
@@ -308,9 +295,9 @@ def split_by_rows(
             # Initialize new file.
             if (i - 1) % rows == 0:
                 filenum += 1
-                tmp_file = output_dir / f"{filepath.stem}_{filenum}"
+                tmp_file = config.output_dir / f"{filepath.stem}_{filenum}"
                 files.append(tmp_file)
-                fout = open(tmp_file, "w", encoding=encoding)
+                fout = open(tmp_file, "w", encoding=config.encoding)
                 fouts.append(fout)
                 fout.write(headers)
 
@@ -319,19 +306,18 @@ def split_by_rows(
     for fout in fouts:
         fout.close()
 
-    if not to_tmp:
+    if not config.is_original:
         os.remove(filepath)
 
     return files
 
 
-def combine_files(in_files: list[Path], encoding: str, output_dir: Path) -> Path:
+def combine_files(in_files: list[Path], config: Config) -> Path:
     """Combines multiple files into one.
 
     Args:
         in_files (list[Path]): List of files to combine.
-        to_tmp (bool): True implies the input file is the original file and should not be deleted.
-        output_dir (Path): Destination directory.
+        config (Config): Config object created from CLI arguments.
 
     Returns:
         Path: Path of the combined file.
@@ -340,8 +326,8 @@ def combine_files(in_files: list[Path], encoding: str, output_dir: Path) -> Path
     if len(in_files) == 1:
         return in_files[0]
 
-    combined_fp = output_dir / "combined"
-    with open(combined_fp, "w", encoding=encoding) as fout:
+    combined_fp = config.output_dir / "combined"
+    with open(combined_fp, "w", encoding=config.encoding) as fout:
         for i, f in enumerate(in_files):
             with open(f, "r") as fin:
                 if i > 0:  # Skip the header row, except for the first file.
@@ -353,24 +339,22 @@ def combine_files(in_files: list[Path], encoding: str, output_dir: Path) -> Path
 
 
 def main() -> None:
-    kwargs = parse_args()
-    input_path: Path = kwargs["input_path"]
-    output_dir: Path = kwargs["output_directory"]
-    extension: str = kwargs["extension"]
-    columns: str = kwargs["columns"]
-    rows: int = kwargs["rows"]
-    encoding: str = kwargs["encoding"]
-    prefix: str = kwargs["prefix"]
-    shuffles: int = kwargs["shuffles"]
-    delimiter: str = kwargs["delimiter"]
-    equal: int = kwargs["equal"]
+    args = parse_args()
+    input_path: Path = args["input_path"]
+    output_dir: Path = args["output_directory"]
+    extension: str = args["extension"]
+    columns: str = args["columns"]
+    rows: int = args["rows"]
+    encoding: str = args["encoding"]
+    prefix: str = args["prefix"]
+    shuffles: int = args["shuffles"]
+    delimiter: str = args["delimiter"]
+    equal: int = args["equal"]
 
-    # Indicates that we're still operating on the original files and therefore should
-    # not delete it after creating the next set of intermediate files.
-    to_tmp = True
+    config = Config(encoding, delimiter, output_dir)
 
     files = []
-    output_ext = ".csv" # Default. Overridden below based on actual files.
+    output_ext = ".csv"  # Default. Overridden below based on actual files.
 
     if input_path.is_dir():
         # "*" is the default extension for wildcarding.
@@ -379,8 +363,8 @@ def main() -> None:
         # Use the extension of the first matching file. Useful when extension is not specified.
         output_ext = in_files[0].suffix
 
-        files = [combine_files(in_files, encoding, output_dir)]
-        to_tmp = False
+        files = [combine_files(in_files, config)]
+        config.to_tmp = False
     else:
         # If input is a file, use that file's extension for outputs.
         output_ext = input_path.suffix
@@ -391,39 +375,35 @@ def main() -> None:
         col_list = columns.split(",")
         new_files = []
         for file in files:
-            new_files.extend(
-                split_by_columns(
-                    file, col_list, encoding, delimiter, to_tmp, output_dir
-                )
-            )
+            new_files.extend(split_by_columns(file, col_list, config))
 
         files = new_files
-        to_tmp = False
+        config.to_tmp = False
 
     # Shuffling must be done before by-row chops for proper randomization.
     if shuffles:
         new_files = []
         for file in files:
-            new_files.extend(shuffle_file(file, encoding, shuffles, to_tmp, output_dir))
+            new_files.extend(shuffle_file(file, shuffles, config))
 
         files = new_files
-        to_tmp = False
+        config.to_tmp = False
 
     if rows:
         new_files = []
         for file in files:
-            new_files.extend(split_by_rows(file, encoding, rows, to_tmp, output_dir))
+            new_files.extend(split_by_rows(file, rows, config))
 
         files = new_files
-        to_tmp = False
+        config.to_tmp = False
 
     if equal:
         new_files = []
         for file in files:
-            new_files.extend(split_by_equal(file, encoding, equal, to_tmp, output_dir))
+            new_files.extend(split_by_equal(file, equal, config))
 
         files = new_files
-        to_tmp = False
+        config.to_tmp = False
 
     for file in files:
         newfile = file
