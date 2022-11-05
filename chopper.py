@@ -208,8 +208,6 @@ def split_by_columns(
         Returns:
             list[Path]: List of split intermediate files.
     """
-    print(delimiter)
-    print(len(delimiter))
 
     with open(filepath, "r", encoding=encoding) as f:
         reader = csv.DictReader(f, delimiter=delimiter)
