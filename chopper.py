@@ -1,3 +1,6 @@
+# Copyright (c): 2022, Table Flip Analytics LLC
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+
 import argparse
 import csv
 import os
@@ -115,7 +118,7 @@ def parse_args() -> dict[str, Any]:
         )
 
     if not args["output_directory"].exists():
-        parser.error("Invalid output_directory. Please specify an existing directory.")
+        os.makedirs(args["output_directory"], exist_ok=True)
 
     actions = ["columns", "rows", "equal", "shuffles"]
     if not args.keys() & actions:
@@ -205,6 +208,8 @@ def split_by_columns(
         Returns:
             list[Path]: List of split intermediate files.
     """
+    print(delimiter)
+    print(len(delimiter))
 
     with open(filepath, "r", encoding=encoding) as f:
         reader = csv.DictReader(f, delimiter=delimiter)
@@ -213,7 +218,7 @@ def split_by_columns(
         for row in reader:
             # File named based on values of split columns.
             out_path = output_dir / clean_filename(
-                "_".join([row[col] for col in col_list])
+                "__".join([f"{col}_{row[col]}" for col in col_list])
             )
 
             if out_path in files:
