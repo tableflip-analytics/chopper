@@ -13,6 +13,14 @@ from pathlib import Path
 from typing import Any
 
 
+## [CG] Putting this up here since there's not really 1 place to put it: I
+##      might spend some time using things like filepath.open and
+##      filepath.rename instead of open and os.*. Admittedly there's not a ton
+##      of value that comes from doing this, it's just a little more consistent
+##      with using pathlib.Path everywhere you can.
+
+
+## [CG] Oooh fahncy, love it
 @dataclass
 class Config:
     encoding: str
@@ -28,6 +36,12 @@ def parse_args() -> dict[str, Any]:
             "Evading RAM."
         )
     )
+    ## [CG] You could consider letting the user use the shell here, so instead
+    ##      of `./chopper.py my_files/ -x csv` you'd invoke something like
+    ##      `./chopper.py $(find my_files -name '*.csv')` (you'd accomplish
+    ##      this just by adding `nargs="*"` to this argument). It's maybe a
+    ##      little less convenient, but it's more flexible (better for power
+    ##      users) and would trim a little complexity out of your program.
     parser.add_argument(
         "input_path",
         type=Path,
@@ -57,6 +71,11 @@ def parse_args() -> dict[str, Any]:
         required=False,
         default="*",
     )
+
+    ## [CG] I'd probably set the default here to 'UTF-8'; Windows people can
+    ##      ponder their poor choices. But, dunno your target audience here.
+    ##      But, I also think the default is always None? You can probably just
+    #       leave it off; idk though.
     parser.add_argument("-e", "--encoding", type=str, required=False, default=None)
     parser.add_argument(
         "-d",
@@ -89,6 +108,10 @@ def parse_args() -> dict[str, Any]:
         required=False,
         default=0,
     )
+
+    ## [CG] You can also use `nargs="*"` here to let people invoke with
+    ##      "-c first last" instead of "-c first,last", and then you don't even
+    ##      need to `split` into `col_list` later.
     actions.add_argument(
         "-c",
         "--columns",
@@ -119,6 +142,10 @@ def parse_args() -> dict[str, Any]:
         default=0,
     )
 
+    ## [CG] I had never used `vars` with an argument before, which is super
+    ##      cool! I've found like, `args.input_path` a little more parsimonious
+    ##      than args["input_path"] though, but chalk this up to personal
+    ##      preference.
     args = vars(parser.parse_args())
 
     if not args["input_path"].exists():
@@ -129,6 +156,9 @@ def parse_args() -> dict[str, Any]:
     if not args["output_directory"].exists():
         os.makedirs(args["output_directory"], exist_ok=True)
 
+    ## [CG] Man it's wild to me that argparse doesn't have a way to say an
+    ##      argument group must have a value, but yeah, next best thing. Also
+    ##      wow I did not know dict keys supported `&`; will use!
     actions = ["columns", "rows", "equal", "shuffles"]
     if not args.keys() & actions:
         parser.error(
@@ -136,6 +166,44 @@ def parse_args() -> dict[str, Any]:
         )
 
     return args
+
+
+## [CG] I see why you're reading the whole file into memory in shuffle_file,
+##      but something else you could do is scan for newlines and shuffle their
+##      their byte positions (example below). This is definitely slower, but
+##      probably not by much with your OS buffering your I/O, and you won't
+##      need to allocate a buffer the size of the file in order to shuffle it.
+##
+##      Sadly it's a lot more convoluted than your method. May not be worth it.
+def shuffle_file2(filepath: Path, shuffles: int, config: Config) -> list[Path]:
+    with open(filepath, "r", encoding=config.encoding) as fin:
+        pos = 0
+        line_indices = []
+        while chunk := fin.read(32768):
+            line_indices.extend([
+                pos + m.end() for m in re.finditer(r'\n', chunk)
+            ])
+            pos += len(chunk)
+
+        for i in range(shuffles):
+            random.shuffle(line_indices)
+
+            new_outpath = config.output_dir / f"{filepath.stem}_shuffle{i+1}"
+
+            with open(new_outpath, "w", encoding=config.encoding) as fout:
+                for li in line_indices:
+                    fin.seek(li)
+                    fout.write(fin.readline())
+
+            files.append(new_outpath)
+
+    if not config.is_original:
+        os.remove(filepath)
+
+    if shuffles == 1:
+        os.rename(new_outpath, filepath)
+
+    return files
 
 
 def shuffle_file(filepath: Path, shuffles: int, config: Config) -> list[str]:
@@ -287,6 +355,10 @@ def split_by_rows(filepath: Path, rows: int, config: Config) -> list[Path]:
         files = []
         fouts = []
 
+        ## [CG] Dunno how the math works out here, but you could use next(f)
+        ##      to get the headers (which I didn't know you could do on a file
+        ##      object; I thought you had to do like `lines = iter(f)` first)
+
         for i, row in enumerate(f):
             if i == 0:
                 headers = row
@@ -373,6 +445,8 @@ def main() -> None:
     # Split by columns first to avoid full file shuffle if possible.
     if columns:
         col_list = columns.split(",")
+        ## [CG] To save a few lines you could do:
+        ##      files = [split_by_columns(f, col_list, config) for f in files]
         new_files = []
         for file in files:
             new_files.extend(split_by_columns(file, col_list, config))
@@ -412,6 +486,11 @@ def main() -> None:
 
         os.rename(file, f"{newfile}{output_ext}")
 
+## [CG] You can just do `main()` here; this test is for checking if this is
+##      the "main" script invoked, which is usually used for testing frameworks
+##      where you have some library code in a file, but if you run `python` on
+##      that file it'll run the tests (or you're using `multiprocessing`, but
+##      God help you in that case).
 
 if __name__ == "__main__":
     main()
