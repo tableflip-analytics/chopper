@@ -39,8 +39,8 @@ purposes.
 An empty/nonexistent folder is highly recommended, as CHOPPER may overwrite files.
 
   -x EXTENSION, --extension EXTENSION
-File extension to search for if input_paths is a directory. Specifying the extension is
-highly recommended to avoid accidental inclusion of files.
+File extension to search for if any input_paths are directories. Specifying the
+extension is highly recommended to avoid accidental inclusion of files.
 
   -e ENCODING, --encoding ENCODING
 Defaults to the system's default encoding, which is nearly always utf-8. See
