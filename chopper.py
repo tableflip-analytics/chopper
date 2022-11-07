@@ -1,6 +1,3 @@
-# Copyright (c): 2022, Table Flip Analytics LLC
-# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-
 import argparse
 import csv
 import random

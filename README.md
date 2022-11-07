@@ -79,5 +79,4 @@ CHOPPER was created by [Joshua Matfess](https://github.com/jsmatfess) of [Table 
 Special thanks to [Peter Stein](https://github.com/pjstein) and [Charlie Gunyon](https://github.com/camgunz) for early feedback.
 
 ## License
-GNU General Public License v3.0 or later.
-See [COPYING](https://github.com/tableflip-analytics/chopper/blob/main/COPYING) to see the full text.
+MIT License. See [LICENSE](https://github.com/tableflip-analytics/chopper/blob/main/LICENSE) to read the full text.
