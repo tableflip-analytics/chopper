@@ -54,11 +54,7 @@ Delimiter to use when parsing the input file. Default ','.
 String prepended to each output file
 
   -s SHUFFLES, --shuffles SHUFFLES
-Perform N shuffles. Outputs one set of chopped files per shuffle. WARNING: In the worst
-case scenario (when only splitting by row count and not any column), setting this flag
-requires loading the entire input file to memory. When the columns argument is used,
-CHOPPER will perform shuffles after splitting by those columns to keep memory use as
-low as possible.
+Perform N shuffles. Outputs one set of chopped files per shuffle.
 
   -c [COLUMNS ...], --columns [COLUMNS ...]
 Field names to split by.
