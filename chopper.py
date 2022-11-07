@@ -14,7 +14,7 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Get into the CHOPPER so you can Create Hoardes Of Punier Pieces "
+            "Get into the CHOPPER so you can Create Hoards Of Punier Pieces, Evading RAM."
             "Evading RAM."
         )
     )
@@ -52,7 +52,17 @@ def parse_args() -> argparse.Namespace:
         required=False,
         default="*",
     )
-    parser.add_argument("-e", "--encoding", type=str, required=False)
+    parser.add_argument(
+        "-e",
+        "--encoding",
+        help=(
+            "Defaults to the system's default encoding, which is nearly always utf-8."
+            "See https://docs.python.org/3.11/library/codecs.html#standard-encodings "
+            "for additional options."
+        ),
+        type=str,
+        required=False
+    )
     parser.add_argument(
         "-d",
         "--delimiter",
@@ -65,7 +75,7 @@ def parse_args() -> argparse.Namespace:
         "-p",
         "--prefix",
         type=str,
-        help="String prepended to each output file",
+        help="String prepended to each output file.",
         required=False,
     )
     actions = parser.add_argument_group()
