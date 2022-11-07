@@ -45,9 +45,9 @@ def parse_args() -> argparse.Namespace:
         "-x",
         "--extension",
         help=(
-            "File extension to search for if input_paths is a directory. Specifying "
-            "the extension is highly recommended to avoid accidental inclusion of "
-            "files."
+            "File extension to search for if any input_paths are directories. "
+            "Specifying the extension is highly recommended to avoid accidental "
+            "inclusion of files."
         ),
         type=str,
         required=False,
@@ -169,7 +169,11 @@ def shuffle_files(
 
     with filepath.open("r", encoding=config.encoding, newline="") as fin_obj:
         offsets = get_offsets(fin_obj)
+
         with mmap.mmap(fin_obj.fileno(), length=0, access=mmap.ACCESS_READ) as fin:
+            if hasattr(mmap.mmap, "madvise"):
+                fin.madvise(mmap.madvise(mmap.MADV_RANDOM))
+                
             fin.seek(0)
             headers = fin.readline()
 
