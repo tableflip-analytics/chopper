@@ -5,6 +5,7 @@ import argparse
 import csv
 import random
 import re
+import mmap
 
 from io import TextIOWrapper
 from itertools import chain, cycle
@@ -61,7 +62,7 @@ def parse_args() -> argparse.Namespace:
             "for additional options."
         ),
         type=str,
-        required=False
+        required=False,
     )
     parser.add_argument(
         "-d",
@@ -82,14 +83,7 @@ def parse_args() -> argparse.Namespace:
     actions.add_argument(
         "-s",
         "--shuffles",
-        help=(
-            "Perform N shuffles. Outputs one set of chopped files per shuffle. "
-            "WARNING: In the worst case scenario (when only splitting by row count "
-            "and not any column), setting this flag requires loading the entire input "
-            "file to memory. When the columns argument is used, CHOPPER will perform "
-            "shuffles after splitting by those columns to keep memory use as low as "
-            "possible."
-        ),
+        help=("Perform N shuffles. Outputs one set of chopped files per shuffle."),
         type=int,
         required=False,
         default=0,
@@ -151,7 +145,7 @@ def get_offsets(file: TextIOWrapper) -> list[int]:
     for line in file:
         pos += len(line)
         row_offsets.append(pos)
-    
+
     return row_offsets
 
 
@@ -172,22 +166,24 @@ def shuffle_files(
     """
 
     files = []
-    with filepath.open("r", encoding=config.encoding) as fin:
-        offsets = get_offsets(fin)
-        fin.seek(0)
-        headers = fin.readline()
 
-        for i in range(shuffles):
-            random.shuffle(offsets)
-            new_outpath = config.output_directory / f"{filepath.stem}_shuffle{i+1}"
+    with filepath.open("r", encoding=config.encoding, newline="") as fin_obj:
+        offsets = get_offsets(fin_obj)
+        with mmap.mmap(fin_obj.fileno(), length=0, access=mmap.ACCESS_READ) as fin:
+            fin.seek(0)
+            headers = fin.readline()
 
-            with new_outpath.open("w", encoding=config.encoding, newline="") as fout:
-                fout.write(headers)
-                for pos in offsets:
-                    fin.seek(pos)
-                    fout.write(fin.readline())
+            for i in range(shuffles):
+                random.shuffle(offsets)
+                new_outpath = config.output_directory / f"{filepath.stem}_shuffle{i+1}"
 
-            files.append(new_outpath)
+                with new_outpath.open("wb", encoding=config.encoding) as fout:
+                    fout.write(headers)
+                    for pos in offsets:
+                        fin.seek(pos)
+                        fout.write(fin.readline())
+
+                files.append(new_outpath)
 
     if filepath.absolute().parents[0] == config.output_directory.absolute():
         filepath.unlink()
@@ -228,7 +224,7 @@ def split_by_columns(
             list[Path]: List of split intermediate files.
     """
 
-    with filepath.open("r", encoding=config.encoding) as f:
+    with filepath.open("r", encoding=config.encoding, newline="") as f:
         reader = csv.DictReader(f, delimiter=config.delimiter)
         files = {}
 
@@ -273,7 +269,7 @@ def split_by_equal(
         list[Path]: List of split intermediate files.
     """
 
-    with filepath.open("r", encoding=config.encoding) as fin:
+    with filepath.open("r", encoding=config.encoding, newline="") as fin:
         files = [
             config.output_directory / f"{filepath.stem}_{i+1}" for i in range(equal)
         ]
@@ -309,7 +305,7 @@ def split_by_rows(filepath: Path, rows: int, config: argparse.Namespace) -> list
         list[Path]: List of split intermediate files.
     """
 
-    with filepath.open("r", encoding=config.encoding) as f:
+    with filepath.open("r", encoding=config.encoding, newline="") as f:
         headers = next(f)
         filenum = 0
         files = []
@@ -353,7 +349,7 @@ def combine_files(in_files: list[Path], config: argparse.Namespace) -> Path:
     combined_fp = config.output_directory / "combined"
     with combined_fp.open("w", encoding=config.encoding, newline="") as fout:
         for i, f in enumerate(in_files):
-            with f.open("r", encoding=config.encoding) as fin:
+            with f.open("r", encoding=config.encoding, newline="") as fin:
                 if i > 0:  # Skip the header row, except for the first file.
                     fin.readline()
                 for line in fin:
