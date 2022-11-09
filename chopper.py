@@ -5,7 +5,6 @@ import os
 import re
 import mmap
 import shutil
-import time
 
 from io import BufferedReader
 from itertools import chain, cycle
@@ -188,7 +187,7 @@ def shuffle_files(
         with mmap.mmap(fin_obj.fileno(), length=0, **config.mmap_kwargs) as fin:
             if os.name != "nt":
                 fin.madvise(mmap.MADV_RANDOM)
-                
+
             fin.seek(0)
             headers = fin.readline()
 
@@ -243,7 +242,6 @@ def split_by_columns(
             list[Path]: List of split intermediate files.
     """
 
-
     with filepath.open("r", encoding=config.encoding, newline="") as fin_obj:
         reader = csv.DictReader(fin_obj, delimiter=config.delimiter)
         files = {}
@@ -275,9 +273,7 @@ def split_by_columns(
     return list(files.keys())
 
 
-def split_by_equal(
-    filepath: Path, equal: int, config: ChopperNamespace
-) -> list[Path]:
+def split_by_equal(filepath: Path, equal: int, config: ChopperNamespace) -> list[Path]:
     """Creates N files of approximately (+/- 1) equal size.
 
     Args:
@@ -329,7 +325,7 @@ def split_by_rows(filepath: Path, rows: int, config: ChopperNamespace) -> list[P
 
     with filepath.open("rb", encoding=config.encoding) as fin_obj:
         with mmap.mmap(fin_obj.fileno(), length=0, **config.mmap_kwargs) as fin:
-            if os.name != 'nt':
+            if os.name != "nt":
                 fin.madvise(mmap.MADV_SEQUENTIAL)
 
             headers = fin.readline()
@@ -372,7 +368,6 @@ def combine_files(in_paths: list[Path], config: ChopperNamespace) -> Path:
     if len(in_paths) == 1:
         return in_paths[0]
 
-
     combined_fp = config.output_directory / "combined"
     with combined_fp.open("w", encoding=config.encoding, newline="") as fout:
         for i, f in enumerate(in_paths):
@@ -380,21 +375,17 @@ def combine_files(in_paths: list[Path], config: ChopperNamespace) -> Path:
                 if i > 0:  # Skip the header row, except for the first file.
                     fin.readline()
                 shutil.copyfileobj(fin, fout)
-                
+
     return combined_fp
 
 
 def main() -> None:
     config = parse_args()
 
-    if os.name == 'nt':
-        config.mmap_kwargs = {
-            "access": mmap.ACCESS_READ
-        }
+    if os.name == "nt":
+        config.mmap_kwargs = {"access": mmap.ACCESS_READ}
     else:
-        config.mmap_kwargs = {
-            "prot": mmap.PROT_READ
-        }
+        config.mmap_kwargs = {"prot": mmap.PROT_READ}
 
     paths = []
     output_ext = ".csv"  # Default. Overridden below based on actual files.
@@ -464,6 +455,4 @@ def main() -> None:
         path.rename(newpath)
 
 
-start = time.time()
 main()
-print(time.time() - start)
