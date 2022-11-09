@@ -6,6 +6,7 @@ import re
 import mmap
 import shutil
 
+from time import time
 from io import BufferedReader
 from itertools import chain, cycle
 from pathlib import Path
@@ -236,7 +237,7 @@ def split_by_columns(
         Args:
             filepath (Path): The path of the file to split.
             columns (list[str]): List of columns to split by. Must match values in header row exactly.
-            config (argpase.Namespace): Namespace object created from CLI arguments.
+            config (ChopperNamespace): Namespace object created from CLI arguments.
 
         Returns:
             list[Path]: List of split intermediate files.
@@ -369,9 +370,9 @@ def combine_files(in_paths: list[Path], config: ChopperNamespace) -> Path:
         return in_paths[0]
 
     combined_fp = config.output_directory / "combined"
-    with combined_fp.open("w", encoding=config.encoding, newline="") as fout:
+    with combined_fp.open("wb", encoding=config.encoding) as fout:
         for i, f in enumerate(in_paths):
-            with f.open("r", encoding=config.encoding, newline="") as fin:
+            with f.open("rb", encoding=config.encoding) as fin:
                 if i > 0:  # Skip the header row, except for the first file.
                     fin.readline()
                 shutil.copyfileobj(fin, fout)
@@ -454,5 +455,6 @@ def main() -> None:
 
         path.rename(newpath)
 
-
+start = time()
 main()
+print(time() - start)
