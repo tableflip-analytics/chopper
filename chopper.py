@@ -1,36 +1,45 @@
-# Copyright (c): 2022, Table Flip Analytics LLC
-# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
-
 import argparse
 import csv
+import numpy as np
 import os
-import random
 import re
+import mmap
+import shutil
 
-from dataclasses import dataclass
-from itertools import cycle
+from time import time
+from io import BufferedReader
+from itertools import chain, cycle
 from pathlib import Path
-from typing import Any
+from typing import Optional
 
 
-@dataclass
-class Config:
-    encoding: str
+class ChopperNamespace(argparse.Namespace):
+    input_paths: list[Path]
+    output_directory: Path
+    extension: str
+    encoding: Optional[str]
     delimiter: str
-    output_dir: Path
-    is_original: bool = True
+    prefix: Optional[str]
+    shuffles: int
+    columns: Optional[list[str]]
+    rows: int
+    equal: int
+    mmap_kwargs: dict
 
 
-def parse_args() -> dict[str, Any]:
+def parse_args() -> ChopperNamespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Get into the CHOPPER so you can Create Hoardes Of Punier Pieces "
+            "Get into the CHOPPER so you can Create Hoards Of Punier Pieces, Evading RAM."
             "Evading RAM."
         )
     )
     parser.add_argument(
-        "input_path",
+        "-i",
+        "--input_paths",
+        nargs="*",
         type=Path,
+        required=True,
         help=(
             "Input file or directory. If a directory is specified, CHOPPER will treat "
             "all files in the directory (including subdirectories) as a single file "
@@ -38,8 +47,10 @@ def parse_args() -> dict[str, Any]:
         ),
     )
     parser.add_argument(
-        "output_directory",
+        "-o",
+        "--output_directory",
         type=Path,
+        required=True,
         help=(
             "An empty/nonexistent folder is highly recommended, as CHOPPER may "
             "overwrite files."
@@ -49,15 +60,25 @@ def parse_args() -> dict[str, Any]:
         "-x",
         "--extension",
         help=(
-            "File extension to search for if input_path is a directory. Specifying "
-            "the extension is highly recommended to avoid accidental inclusion of "
-            "files."
+            "File extension to search for if any input_paths are directories. "
+            "Specifying the extension is highly recommended to avoid accidental "
+            "inclusion of files."
         ),
         type=str,
         required=False,
         default="*",
     )
-    parser.add_argument("-e", "--encoding", type=str, required=False, default=None)
+    parser.add_argument(
+        "-e",
+        "--encoding",
+        help=(
+            "Defaults to the system's default encoding, which is nearly always utf-8."
+            "See https://docs.python.org/3.11/library/codecs.html#standard-encodings "
+            "for additional options."
+        ),
+        type=str,
+        required=False,
+    )
     parser.add_argument(
         "-d",
         "--delimiter",
@@ -70,21 +91,14 @@ def parse_args() -> dict[str, Any]:
         "-p",
         "--prefix",
         type=str,
-        help="String prepended to each output file",
+        help="String prepended to each output file.",
         required=False,
     )
     actions = parser.add_argument_group()
     actions.add_argument(
         "-s",
         "--shuffles",
-        help=(
-            "Perform N shuffles. Outputs one set of chopped files per shuffle. "
-            "WARNING: In the worst case scenario (when only splitting by row count "
-            "and not any column), setting this flag requires loading the entire input "
-            "file to memory. When the columns argument is used, CHOPPER will perform "
-            "shuffles after splitting by those columns to keep memory use as low as "
-            "possible."
-        ),
+        help=("Perform N shuffles. Outputs one set of chopped files per shuffle."),
         type=int,
         required=False,
         default=0,
@@ -92,10 +106,10 @@ def parse_args() -> dict[str, Any]:
     actions.add_argument(
         "-c",
         "--columns",
+        nargs="*",
         type=str,
-        help="Comma separated list of field names to split by.",
+        help="Field names to split by.",
         required=False,
-        default="",
     )
     row_group = actions.add_mutually_exclusive_group()
     row_group.add_argument(
@@ -119,26 +133,41 @@ def parse_args() -> dict[str, Any]:
         default=0,
     )
 
-    args = vars(parser.parse_args())
+    namespace = ChopperNamespace()
+    config = parser.parse_args(namespace=namespace)
 
-    if not args["input_path"].exists():
-        parser.error(
-            "Invalid input_path. Please specify an existing file or directory."
-        )
+    for path in config.input_paths:
+        if not path.exists():
+            parser.error(
+                "Invalid input_paths. Please specify existing file(s) and/or directory (directories)."
+            )
 
-    if not args["output_directory"].exists():
-        os.makedirs(args["output_directory"], exist_ok=True)
+    if not config.output_directory.exists():
+        config.output_directory.mkdir(exist_ok=True)
 
-    actions = ["columns", "rows", "equal", "shuffles"]
-    if not args.keys() & actions:
+    actions = {"columns", "rows", "equal", "shuffles"}
+    if len(set(config.__dict__.keys()).intersection(actions)) == 0:
         parser.error(
             "You must specify at least one action (columns, rows, equal, shuffles)."
         )
 
-    return args
+    return config
 
 
-def shuffle_file(filepath: Path, shuffles: int, config: Config) -> list[str]:
+def get_offsets(file: BufferedReader) -> np.ndarray:
+    pos = 0
+    row_offsets = []
+
+    while row := file.readline():
+        pos += len(row)
+        row_offsets.append(pos)
+
+    return np.asarray(row_offsets)
+
+
+def shuffle_files(
+    filepath: Path, shuffles: int, config: ChopperNamespace
+) -> list[Path]:
 
     """Creates N copies of the provided file with the headers intact and data lines
     shuffled.
@@ -146,36 +175,44 @@ def shuffle_file(filepath: Path, shuffles: int, config: Config) -> list[str]:
         Args:
             filepath (Path): The path of the file to shuffle.
             shuffles (int): Number of shuffles to perform. Outputs one file per shuffle.
-            config (Config): Config object created from CLI arguments.
+            config (Namespace): Namespace object created from CLI arguments.
 
         Returns:
             list[Path]: List of shuffled intermediate files.
     """
 
-    files = []
-    with open(filepath, "r", encoding=config.encoding) as fin:
-        rows = fin.readlines()
+    paths = []
 
-    headers = rows[0]
-    data = rows[1:]
+    with filepath.open("rb", encoding=config.encoding) as fin_obj:
+        offsets = get_offsets(fin_obj)
+        with mmap.mmap(fin_obj.fileno(), length=0, **config.mmap_kwargs) as fin:
+            if os.name != "nt":
+                fin.madvise(mmap.MADV_RANDOM)
 
-    for i in range(shuffles):
-        random.shuffle(data)
-        new_outpath = config.output_dir / f"{filepath.stem}_shuffle{i+1}"
+            fin.seek(0)
+            headers = fin.readline()
 
-        with open(new_outpath, "w", encoding=config.encoding) as fout:
-            fout.write(headers)
-            fout.writelines(data)
+            for i in range(shuffles):
+                np.random.shuffle(offsets)
+                new_outpath = config.output_directory / f"{filepath.stem}_shuffle{i+1}"
 
-        files.append(new_outpath)
+                with new_outpath.open("wb", encoding=config.encoding) as fout:
+                    fout.write(headers)
+                    for pos in offsets:
+                        fin.seek(pos)
+                        fout.write(fin.readline())
 
-    if not config.is_original:
-        os.remove(filepath)
+                paths.append(new_outpath)
+
+    if filepath.absolute().parents[0] == config.output_directory.absolute():
+        filepath.unlink()
 
     # For aesthetics. If only one set of files, no need to specify which shuffle.
     if shuffles == 1:
-        os.rename(new_outpath, filepath)
-    return files
+        fname = config.output_directory / filepath.stem
+        new_outpath.rename(fname)
+        paths[0] = fname
+    return paths
 
 
 def clean_filename(string: str) -> str:
@@ -191,33 +228,35 @@ def clean_filename(string: str) -> str:
     return re.sub(r"\W", "_", string)
 
 
-def split_by_columns(filepath: Path, col_list: list[str], config: Config) -> list[Path]:
+def split_by_columns(
+    filepath: Path, columns: list[str], config: ChopperNamespace
+) -> list[Path]:
     """Create one file per unique combination of values in the specified columns in
     the input file.
 
         Args:
             filepath (Path): The path of the file to split.
-            col_list (list): List of columns to split by. Must match values in header row exactly.
-            config (Config): Config object created from CLI arguments.
+            columns (list[str]): List of columns to split by. Must match values in header row exactly.
+            config (ChopperNamespace): Namespace object created from CLI arguments.
 
         Returns:
             list[Path]: List of split intermediate files.
     """
 
-    with open(filepath, "r", encoding=config.encoding) as f:
-        reader = csv.DictReader(f, delimiter=config.delimiter)
+    with filepath.open("r", encoding=config.encoding, newline="") as fin_obj:
+        reader = csv.DictReader(fin_obj, delimiter=config.delimiter)
         files = {}
 
         for row in reader:
             # File named based on values of split columns.
-            out_path = config.output_dir / clean_filename(
-                "__".join([f"{col}_{row[col]}" for col in col_list])
+            out_path = config.output_directory / clean_filename(
+                "__".join([f"{col}_{row[col]}" for col in columns])
             )
 
             if out_path in files:
                 writer = files[out_path]["writer"]
             else:  # Initialize file for new value combination and add to dict.
-                fout = open(out_path, "w", encoding=config.encoding, newline="")
+                fout = out_path.open("w", encoding=config.encoding, newline="")
                 writer = csv.DictWriter(
                     fout, delimiter=config.delimiter, fieldnames=reader.fieldnames
                 )
@@ -229,189 +268,193 @@ def split_by_columns(filepath: Path, col_list: list[str], config: Config) -> lis
     for file in files.values():
         file["fout"].close()
 
-    if not config.is_original:
-        os.remove(filepath)
+    if filepath.absolute().parents[0] == config.output_directory.absolute():
+        filepath.unlink()
 
     return list(files.keys())
 
 
-def split_by_equal(filepath: Path, equal: int, config: Config) -> list[Path]:
+def split_by_equal(filepath: Path, equal: int, config: ChopperNamespace) -> list[Path]:
     """Creates N files of approximately (+/- 1) equal size.
 
     Args:
         filepath (Path): The path of the file to split.
         equal (int): Number of files to split into.
-        config (Config): Config object created from CLI arguments.
+        config (ChopperNamespace): Namespace object created from CLI arguments.
 
     Returns:
         list[Path]: List of split intermediate files.
     """
 
-    with open(filepath, "r", encoding=config.encoding) as fin:
-        files = [config.output_dir / f"{filepath.stem}_{i+1}" for i in range(equal)]
-        fouts = [open(f, "w", encoding=config.encoding) for f in files]
-        fout_cycle = cycle(fouts)
+    with filepath.open("rb", encoding=config.encoding) as fin_obj:
+        with mmap.mmap(fin_obj.fileno(), length=0, **config.mmap_kwargs) as fin:
+            if os.name != "nt":
+                fin.madvise(mmap.MADV_SEQUENTIAL)
 
-        for i, row in enumerate(fin):
-            if i == 0:
-                for fout in fouts:
-                    fout.write(row)  # Write headers
-                continue
+            paths = [
+                config.output_directory / f"{filepath.stem}_{i+1}" for i in range(equal)
+            ]
+            fouts = [f.open("wb", encoding=config.encoding) for f in paths]
+            fout_cycle = cycle(fouts)
 
-            next(fout_cycle).write(row)
+            headers = fin.readline()
+            for fout in fouts:
+                fout.write(headers)
+            while row := fin.readline():
+                next(fout_cycle).write(row)
 
     for fout in fouts:
         fout.close()
 
-    if not config.is_original:
-        os.remove(filepath)
+    if filepath.absolute().parents[0] == config.output_directory.absolute():
+        filepath.unlink()
 
-    return files
+    return paths
 
 
-def split_by_rows(filepath: Path, rows: int, config: Config) -> list[Path]:
+def split_by_rows(filepath: Path, rows: int, config: ChopperNamespace) -> list[Path]:
     """Splits the input file into files of at most N rows.
 
     Args:
         filepath (Path): The path of the file to split.
         rows (int): Max rows per file.
-        config (Config): Config object created from CLI arguments.
+        config (ChopperNamespace): Namespace object created from CLI arguments.
 
     Returns:
         list[Path]: List of split intermediate files.
     """
 
-    with open(filepath, "r", encoding=config.encoding) as f:
-        headers = ""
-        filenum = 0
-        files = []
-        fouts = []
+    with filepath.open("rb", encoding=config.encoding) as fin_obj:
+        with mmap.mmap(fin_obj.fileno(), length=0, **config.mmap_kwargs) as fin:
+            if os.name != "nt":
+                fin.madvise(mmap.MADV_SEQUENTIAL)
 
-        for i, row in enumerate(f):
-            if i == 0:
-                headers = row
-                continue
+            headers = fin.readline()
+            filenum = 0
+            paths = []
+            fout = None
+            i = 0
 
-            # Initialize new file.
-            if (i - 1) % rows == 0:
-                filenum += 1
-                tmp_file = config.output_dir / f"{filepath.stem}_{filenum}"
-                files.append(tmp_file)
-                fout = open(tmp_file, "w", encoding=config.encoding)
-                fouts.append(fout)
-                fout.write(headers)
+            while row := fin.readline():
+                # Initialize new file.
+                if i % rows == 0:
+                    if fout:
+                        fout.close()
+                    filenum += 1
+                    tmp_path = config.output_directory / f"{filepath.stem}_{filenum}"
+                    paths.append(tmp_path)
+                    fout = tmp_path.open("wb", encoding=config.encoding)
+                    fout.write(headers)
 
-            fout.write(row)
+                fout.write(row)
+                i += 1
 
-    for fout in fouts:
-        fout.close()
+    if filepath.absolute().parents[0] == config.output_directory.absolute():
+        filepath.unlink()
 
-    if not config.is_original:
-        os.remove(filepath)
-
-    return files
+    return paths
 
 
-def combine_files(in_files: list[Path], config: Config) -> Path:
+def combine_files(in_paths: list[Path], config: ChopperNamespace) -> Path:
     """Combines multiple files into one.
 
     Args:
-        in_files (list[Path]): List of files to combine.
-        config (Config): Config object created from CLI arguments.
+        in_paths (list[Path]): List of files to combine.
+        config (ChopperNamespace): Namespace object created from CLI arguments.
 
     Returns:
         Path: Path of the combined file.
     """
 
-    if len(in_files) == 1:
-        return in_files[0]
+    if len(in_paths) == 1:
+        return in_paths[0]
 
-    combined_fp = config.output_dir / "combined"
-    with open(combined_fp, "w", encoding=config.encoding) as fout:
-        for i, f in enumerate(in_files):
-            with open(f, "r") as fin:
+    combined_fp = config.output_directory / "combined"
+    with combined_fp.open("wb", encoding=config.encoding) as fout:
+        for i, f in enumerate(in_paths):
+            with f.open("rb", encoding=config.encoding) as fin:
                 if i > 0:  # Skip the header row, except for the first file.
-                    next(fin)
-                for line in fin:
-                    fout.write(line)
+                    fin.readline()
+                shutil.copyfileobj(fin, fout)
 
     return combined_fp
 
 
 def main() -> None:
-    args = parse_args()
-    input_path: Path = args["input_path"]
-    output_dir: Path = args["output_directory"]
-    extension: str = args["extension"]
-    columns: str = args["columns"]
-    rows: int = args["rows"]
-    encoding: str = args["encoding"]
-    prefix: str = args["prefix"]
-    shuffles: int = args["shuffles"]
-    delimiter: str = args["delimiter"]
-    equal: int = args["equal"]
+    config = parse_args()
 
-    config = Config(encoding, delimiter, output_dir)
+    if os.name == "nt":
+        config.mmap_kwargs = {"access": mmap.ACCESS_READ}
+    else:
+        config.mmap_kwargs = {"prot": mmap.PROT_READ}
 
-    files = []
+    paths = []
     output_ext = ".csv"  # Default. Overridden below based on actual files.
 
-    if input_path.is_dir():
-        # "*" is the default extension for wildcarding.
-        in_files = list(input_path.glob(f"**/*.{extension}"))
-
-        # Use the extension of the first matching file. Useful when extension is not specified.
-        output_ext = in_files[0].suffix
-
-        files = [combine_files(in_files, config)]
-        config.is_original = False
+    if len(config.input_paths) == 1 and config.input_paths[0].is_file():
+        output_ext = config.input_paths[0].suffix
+        paths.append(config.input_paths[0])
     else:
-        # If input is a file, use that file's extension for outputs.
-        output_ext = input_path.suffix
-        files.append(input_path)
+        combine_me = []
+        for path in config.input_paths:
+            if path.is_dir():
+                # "*" is the default extension for wildcarding.
+                in_files = list(path.glob(f"**/*.{config.extension}"))
+
+                # Use the extension of the first matching file. Useful when extension is not specified.
+                output_ext = in_files[0].suffix
+                combine_me.extend(in_files)
+            else:
+                # If input is a file, use that file's extension for outputs.
+                output_ext = path.suffix
+                combine_me.append(path)
+        if len(combine_me) == 1:
+            paths.append(combine_me[0])
+        else:
+            paths.append(combine_files(combine_me, config))
 
     # Split by columns first to avoid full file shuffle if possible.
-    if columns:
-        col_list = columns.split(",")
-        new_files = []
-        for file in files:
-            new_files.extend(split_by_columns(file, col_list, config))
-
-        files = new_files
-        config.is_original = False
+    if config.columns:
+        paths = list(
+            chain.from_iterable(
+                [split_by_columns(path, config.columns, config) for path in paths]
+            )
+        )
 
     # Shuffling must be done before by-row chops for proper randomization.
-    if shuffles:
-        new_files = []
-        for file in files:
-            new_files.extend(shuffle_file(file, shuffles, config))
+    if config.shuffles:
+        paths = list(
+            chain.from_iterable(
+                [shuffle_files(path, config.shuffles, config) for path in paths]
+            )
+        )
 
-        files = new_files
-        config.is_original = False
+    if config.rows:
+        paths = list(
+            chain.from_iterable(
+                [split_by_rows(path, config.rows, config) for path in paths]
+            )
+        )
 
-    if rows:
-        new_files = []
-        for file in files:
-            new_files.extend(split_by_rows(file, rows, config))
+    if config.equal:
+        paths = list(
+            chain.from_iterable(
+                [split_by_equal(path, config.equal, config) for path in paths]
+            )
+        )
 
-        files = new_files
-        config.is_original = False
+    for path in paths:
+        newpath = path
+        if config.prefix:
+            newpath = config.output_directory / f"{config.prefix}_{path.stem}"
 
-    if equal:
-        new_files = []
-        for file in files:
-            new_files.extend(split_by_equal(file, equal, config))
+        newpath = Path(f"{newpath}{output_ext}")
 
-        files = new_files
-        config.is_original = False
+        if newpath.exists():
+            newpath.unlink()
 
-    for file in files:
-        newfile = file
-        if prefix:
-            newfile = output_dir / f"{prefix}_{file.stem}"
+        path.rename(newpath)
 
-        os.rename(file, f"{newfile}{output_ext}")
-
-
-if __name__ == "__main__":
-    main()
+start = time()
+main()
+print(time() - start)
